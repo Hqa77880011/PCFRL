@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "PCFRL"
+version = "0.1.0"
+description = "PCFRL implementation"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.24", "torch>=2.2", "matplotlib>=3.8"]
+
+[project.scripts]
+pcfrl = "pcfrl.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["pcfrl*"]
+
+[project.optional-dependencies]
+battery = ["pybamm>=25.4,<26"]
