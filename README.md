@@ -54,7 +54,7 @@ The manuscript-based SAC, fixed-antecedent fuzzy controller and PyBaMM plant are
 | CCCV / multistage controls | `evaluate` | `pcfrl evaluate --baseline cccv --output outputs/cccv --fidelity DFN` (use `mscc` for multistage) |
 | Functional validation | `smoke.py` | `python smoke.py`; optional `python smoke.py --plant` |
 
-`python smoke.py` passed on Python 3.13.5 / torch 2.7.1+cu118 CPU, seed 0 and one thread: real SAC update with finite actor/critic losses, nonzero fuzzy-consequent gradient/update, actor update, nonnegative duals, hand-checked rule weights, current cap, checkpoint prediction equality and SAC/fixed-fuzzy/no-projection controls. The replay batch is synthetic and makes no battery-performance claim. `python smoke.py --plant` also passed in a dedicated system-site-packages environment with PyBaMM 25.12.2, CasADi 3.6.7 and pybammsolvers 0.3.3, retaining NumPy 2.1.3 and the above CPU/Torch configuration. It initializes real SPMe and DFN models, checks repeatable previews without committing their state, executes a 0.1 A charging second, verifies the native negative-current convention and solver-integrated discharge-capacity change (-0.1/3600 Ah), and checks the DFN negative-electrode irreversible-plating option. SPMe additionally executes the real 41-current safe-bound search and checks its returned current against all one-step constraints. CI executes the same `--plant` check. Full charging episodes, condition-matrix outcome metrics and full policy training were not run. Parameter merging and thermal constants remain explicit implementation choices.
+`python smoke.py` passed on Python 3.13.5 / torch 2.7.1+cu118 CPU, seed 0 and one thread: real SAC update with finite actor/critic losses, nonzero fuzzy-consequent gradient/update, actor update, nonnegative duals, hand-checked rule weights, current cap, checkpoint prediction equality and SAC/fixed-fuzzy/no-projection controls. The replay batch is synthetic and makes no battery-performance claim. `python smoke.py --plant` also passed in a dedicated system-site-packages environment with PyBaMM 25.12.2, CasADi 3.6.7 and pybammsolvers 0.3.3, retaining NumPy 2.1.3 and the above CPU/Torch configuration. It initializes real SPMe and DFN models, checks repeatable previews without committing their state, executes a 0.1 A charging second, verifies the native negative-current convention and solver-integrated discharge-capacity change (-0.1/3600 Ah), and checks the DFN negative-electrode irreversible-plating option. SPMe additionally executes the real 41-current safe-bound search and checks its returned current against all one-step constraints. CI executes the same `--plant` check. Complete reduced-range episode and condition-matrix checks are now available as described below; full policy training and the full published 10%-to-80% campaign were not run. Parameter merging and thermal constants remain explicit implementation choices.
 
 ## Windows runtime used for the plant check
 
@@ -80,3 +80,27 @@ $env:OPENBLAS_NUM_THREADS = '1'
 ```
 
 The isolated environment and its junction are retained as a local runtime and are excluded from Git. An installation whose CasADi directory already has an ASCII-only path does not require the alias. The junction is a link to the runtime, so it must not be recursively cleaned as if it were a copy of the package.
+
+## Complete episode and condition-matrix check
+
+`evaluate` now accepts explicit `--temperatures`, `--sohs`, `--initial-soc`,
+and `--max-seconds`. Defaults retain the manuscript's 10/25/40 C by
+0.8/0.9/1 SOH matrix, 10% initial SOC, 80% target and 1800-second limit.
+Every condition produces a terminal status, trace and outcome metrics, including
+failed-condition time penalties at that registered limit.
+
+```bash
+pcfrl evaluate --model outputs/full/model.pt --output outputs/condition_matrix --fidelity DFN --temperatures 10 25 40 --sohs 0.8 0.9 1 --initial-soc 0.1 --max-seconds 1800 --seed 0
+python smoke.py --plant --episodes
+```
+
+The executable episode smoke uses real SPMe and DFN solvers, the saved/reloaded
+SAC/fuzzy controller after one synthetic update, and the real safety search. It
+starts at SOC 0.7995 and finishes at the unchanged 0.8 target, with a 60-second
+registered limit: a 2x2 SPMe matrix (25/40 C, SOH 0.8/1) and a DFN condition
+(25 C, SOH 1). This short terminal-range protocol tests complete control flow,
+termination, matrix aggregation, trace-based time/efficiency arithmetic and
+constraint checks at modest cost. It is not the paper's full-range charging
+benchmark or a trained-policy performance result. The existing Windows runtime
+and process-local CasADi alias above apply unchanged. Original replay,
+trained checkpoints and private full-campaign logs remain unavailable.

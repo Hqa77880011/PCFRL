@@ -2,7 +2,7 @@ import numpy as np
 
 
 class Battery:
-    def __init__(self, fidelity='SPMe', temperature=25., soh=1., perturbation=None):
+    def __init__(self, fidelity='SPMe', temperature=25., soh=1., perturbation=None, initial_soc=.1):
         import pybamm
         self.pybamm = pybamm
         model_class = {'SPMe': pybamm.lithium_ion.SPMe, 'DFN': pybamm.lithium_ion.DFN}[fidelity]
@@ -16,10 +16,10 @@ class Battery:
         for name, factor in (perturbation or {}).items():
             parameters.update({name: parameters[name] * factor})
         self.simulation = pybamm.Simulation(model, parameter_values=parameters, solver=pybamm.CasadiSolver(mode='safe'))
-        self.solution = self.simulation.solve([0, 1e-6], initial_soc=.1,
+        self.solution = self.simulation.solve([0, 1e-6], initial_soc=initial_soc,
                                               inputs={'Current function [A]': 0., 'Ambient temperature [K]': temperature + 273.15})
         self.core, self.surface, self.ambient = temperature, temperature, temperature
-        self.soh, self.soc, self.elapsed, self.previous, self.loss = soh, .1, 0., 0., 0.
+        self.soh, self.soc, self.elapsed, self.previous, self.loss = soh, initial_soc, 0., 0., 0.
 
     def scalar(self, solution, name):
         return float(np.asarray(solution[name].entries)[..., -1].mean())

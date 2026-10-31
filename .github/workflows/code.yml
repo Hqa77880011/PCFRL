@@ -13,7 +13,7 @@ jobs:
       - run: python -m compileall -q pcfrl
       - run: python -c "import pcfrl.cli"
       - run: python -c "import pybamm"
-      - run: python smoke.py --plant
+      - run: python smoke.py --plant --episodes
         env:
           PYBAMM_DISABLE_TELEMETRY: "true"
           OMP_NUM_THREADS: "1"

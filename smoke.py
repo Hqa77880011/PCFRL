@@ -2,6 +2,9 @@
 import argparse
 import io
 import json
+import tempfile
+from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import torch
@@ -12,6 +15,7 @@ from pcfrl.method import SAC
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--plant', action='store_true')
+    parser.add_argument('--episodes', action='store_true')
     args = parser.parse_args()
     torch.set_num_threads(1)
     torch.manual_seed(0)
@@ -87,6 +91,32 @@ def main():
                 assert value[2] >= -1e-6 and value[3] <= .8 + 1e-8
             print(f'PASS: real {fidelity} initialization, repeatable noncommitting preview, '
                   'one-second transition and electrochemical Coulomb counting', flush=True)
+    if args.episodes:
+        from pcfrl.cli import evaluate
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / 'functional.pt'
+            torch.save({'actor': agent.actor.state_dict(), 'fuzzy': agent.fuzzy.state_dict(),
+                        'variant': 'full', 'training_status': 'one synthetic functional update'}, checkpoint)
+            for fidelity, temperatures, sohs in [('SPMe', [25., 40.], [.8, 1.]), ('DFN', [25.], [1.])]:
+                evaluate(SimpleNamespace(model=str(checkpoint), output=str(root / fidelity), seed=0,
+                                         fidelity=fidelity, temperatures=temperatures, sohs=sohs,
+                                         initial_soc=.7995, max_seconds=60, noise=False,
+                                         actuator_delay=False, baseline='cccv'))
+                summaries = json.loads((root / fidelity / 'metrics.json').read_text())
+                assert len(summaries) == len(temperatures) * len(sohs)
+                for row in summaries:
+                    assert row['termination'] == 'target' and row['success']
+                    assert row['violation_rate'] == 0 and 0 < row['charging_seconds'] <= 60
+                    import csv
+                    with (root / fidelity / (row['condition'] + '.csv')).open() as handle:
+                        trace = list(csv.DictReader(handle))
+                    assert len(trace) == row['charging_seconds']
+                    charger = sum(float(value['charger_wh']) for value in trace)
+                    stored = sum(float(value['stored_wh']) for value in trace)
+                    np.testing.assert_allclose(row['energy_efficiency'], stored / charger, rtol=1e-12)
+                    assert float(trace[-1]['soc']) >= .8 - 1e-7
+                print(f'PASS: complete reduced-range {fidelity} charging episodes, matrix and metrics', flush=True)
     print('PASS: SAC actor/critic/fuzzy gradients and updates, nonnegative dual, rule arithmetic, safety cap, checkpoint equality, ablations')
 
 

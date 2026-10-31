@@ -77,11 +77,11 @@ def evaluate(args):
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
     summaries = []
-    for temperature in [10., 25., 40.]:
-        for soh in [.8, .9, 1.]:
-            battery = Battery(args.fidelity, temperature, soh)
+    for temperature in args.temperatures:
+        for soh in args.sohs:
+            battery = Battery(args.fidelity, temperature, soh, initial_soc=args.initial_soc)
             rows, previous_command, termination = [], 0., 'timeout'
-            for step in range(1800):
+            for step in range(args.max_seconds):
                 state = battery.state()
                 observed = state.copy()
                 if args.noise:
@@ -130,7 +130,8 @@ def evaluate(args):
             charge = sum(row['current_a'] / 3600 for row in rows)
             charger = sum(row['charger_wh'] for row in rows)
             summaries.append({'condition': name, 'termination': termination, 'success': success,
-                              'charging_seconds': len(rows) if success else 1800,
+                              'charging_seconds': len(rows) if success else args.max_seconds,
+                              'initial_soc': args.initial_soc, 'target_soc': .8, 'maximum_seconds': args.max_seconds,
                               'peak_core_c': max([row['core_c'] for row in rows] + [temperature]),
                               'energy_efficiency': sum(row['stored_wh'] for row in rows) / charger if charger > 0 else None,
                               'projected_fade_1000_percent': 100000 * sum(row['capacity_loss_ah'] for row in rows) / charge if charge > 0 else None,
@@ -161,8 +162,18 @@ def main():
     p.add_argument('--model')
     p.add_argument('--baseline', choices=['cccv', 'mscc'], default='cccv')
     p.add_argument('--fidelity', choices=['SPMe', 'DFN'], default='DFN')
+    p.add_argument('--temperatures', type=float, nargs='+', default=[10., 25., 40.])
+    p.add_argument('--sohs', type=float, nargs='+', default=[.8, .9, 1.])
+    p.add_argument('--initial-soc', type=float, default=.1)
+    p.add_argument('--max-seconds', type=int, default=1800)
     p.add_argument('--noise', action='store_true')
     p.add_argument('--actuator-delay', action='store_true')
     p.add_argument('--seed', type=int, default=0)
     args = parser.parse_args()
+    if args.command == 'evaluate' and (not 0 <= args.initial_soc < .8 or args.max_seconds < 1 or any(h <= 0 for h in args.sohs)):
+        parser.error('initial-soc must be in [0,.8), max-seconds positive and SOH values positive')
     {'train': train, 'evaluate': evaluate}[args.command](args)
+
+
+if __name__ == "__main__":
+    main()
