@@ -42,4 +42,16 @@ pcfrl train --output outputs/sac --steps 500000 --seed 0 --variant sac
 
 Training writes `model.pt` and `history.json`. Evaluation writes `metrics.json` and `charging.png` under the selected output directory.
 
-Source inspection: Python 3.13.5, numpy 2.1.3, torch 2.7.1+cu118, matplotlib 3.10.0 (installed versions inspected). Checks covered Python syntax, configuration parsing and CLI arguments. No training, full evaluation or CI was run in this update.
+## Implementation scope and functional validation
+
+The manuscript-based SAC, fixed-antecedent fuzzy controller and PyBaMM plant are reused. The paper's original replay buffers/checkpoints and full simulation logs are unavailable. No new training output is used as evidence for the manuscript's reported performance.
+
+| Paper module / metric | Entry | Command / output |
+| --- | --- | --- |
+| Twelve TSK rules, actor and constrained SAC | `pcfrl/method.py` | `pcfrl train ... --variant full` |
+| Electrochemical preview, thermal state, current projection | `pcfrl/plant.py` | real SPMe training / DFN evaluation |
+| Success/time, violation/fade/efficiency/latency | `pcfrl/cli.py:evaluate` | per-condition CSV and `metrics.json` |
+| CCCV / multistage controls | `evaluate` | `pcfrl evaluate --baseline cccv --output outputs/cccv --fidelity DFN` (use `mscc` for multistage) |
+| Functional validation | `smoke.py` | `python smoke.py`; optional `python smoke.py --plant` |
+
+`python smoke.py` passed on Python 3.13.5 / torch 2.7.1+cu118 CPU, seed 0 and one thread: real SAC update with finite actor/critic losses, nonzero fuzzy-consequent gradient/update, actor update, nonnegative duals, hand-checked rule weights, current cap, checkpoint prediction equality and SAC/fixed-fuzzy/no-projection controls. The replay batch is synthetic and makes no battery-performance claim. The local Python environment lacks optional PyBaMM; `--plant`, real SPMe/DFN transitions and all battery outcome metrics were **not run**. Install `.[battery]` in the documented environment before running that check. Parameter merging and thermal constants are implementation choices requiring validation against the intended cell protocol.
