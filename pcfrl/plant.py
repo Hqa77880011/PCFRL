@@ -8,7 +8,7 @@ class Battery:
         model_class = {'SPMe': pybamm.lithium_ion.SPMe, 'DFN': pybamm.lithium_ion.DFN}[fidelity]
         model = model_class(options={'thermal': 'isothermal', 'calculate heat source for isothermal models': 'true',
                                      'SEI': 'solvent-diffusion limited',
-                                     'lithium plating': 'partially reversible'})
+                                     'lithium plating': 'irreversible' if fidelity == 'DFN' else 'partially reversible'})
         parameters = pybamm.ParameterValues('OKane2022')
         parameters.update(dict(pybamm.ParameterValues('Chen2020').items()), check_already_exists=False)
         parameters.update({'Current function [A]': '[input]', 'Ambient temperature [K]': '[input]',

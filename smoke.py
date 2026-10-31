@@ -56,14 +56,37 @@ def main():
             np.testing.assert_allclose(control.fuzzy.beta.detach(), SAC().fuzzy.beta.detach())
     if args.plant:
         from pcfrl.plant import Battery
-        battery = Battery('SPMe')
-        initial = battery.state().copy()
-        preview = battery.preview(.1)
-        np.testing.assert_array_equal(initial, battery.state())
-        state, reward, costs, done, info = battery.step(.1)
-        assert np.isfinite(state).all() and np.isfinite(reward) and np.isfinite(costs).all()
-        assert battery.elapsed == 1. and state[0] > initial[0]
-        print('PASS: real SPMe initialization/preview/one transition')
+        for fidelity in ['SPMe', 'DFN']:
+            battery = Battery(fidelity)
+            initial = battery.state().copy()
+            initial_capacity = battery.scalar(battery.solution, 'Discharge capacity [A.h]')
+            first = battery.preview(.1)
+            second = battery.preview(.1)
+            np.testing.assert_array_equal(initial, battery.state())
+            assert battery.elapsed == battery.previous == battery.loss == 0.
+            np.testing.assert_allclose(first[1], second[1], rtol=1e-6, atol=1e-8)
+            state, reward, costs, done, info = battery.step(.1)
+            assert np.isfinite(state).all() and np.isfinite(reward) and np.isfinite(costs).all()
+            assert all(np.isfinite(value) for value in info.values()) and not done
+            assert battery.elapsed == 1. and state[0] > initial[0]
+            np.testing.assert_allclose(state[[3, 1, 6, 0]], first[1], rtol=1e-6, atol=1e-7)
+            np.testing.assert_allclose(battery.scalar(battery.solution, 'Current [A]'), -.1, atol=1e-12)
+            capacity_change = battery.scalar(battery.solution, 'Discharge capacity [A.h]') - initial_capacity
+            np.testing.assert_allclose(capacity_change, -.1 / 3600, rtol=1e-6, atol=1e-10)
+            np.testing.assert_allclose(battery.soc - .1, -capacity_change / (5 * battery.soh), atol=1e-10)
+            if fidelity == 'DFN':
+                assert battery.simulation.model.options.negative['lithium plating'] == 'irreversible'
+            else:
+                # Exercise the real 41-current feasibility search without committing previews.
+                committed = battery.state().copy()
+                bound, failed = battery.safe_bound()
+                assert not failed and 0 <= bound <= 20
+                np.testing.assert_array_equal(committed, battery.state())
+                _, value, _, _ = battery.preview(bound)
+                assert value[0] <= 4.2 + 1e-6 and value[1] <= 45 + 1e-6
+                assert value[2] >= -1e-6 and value[3] <= .8 + 1e-8
+            print(f'PASS: real {fidelity} initialization, repeatable noncommitting preview, '
+                  'one-second transition and electrochemical Coulomb counting', flush=True)
     print('PASS: SAC actor/critic/fuzzy gradients and updates, nonnegative dual, rule arithmetic, safety cap, checkpoint equality, ablations')
 
 
