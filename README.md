@@ -16,7 +16,7 @@ In PowerShell, replace the activation line with `.venv\Scripts\Activate.ps1`.
 
 ## Data and preprocessing
 
-The PyBaMM plant uses Chen2020 electrochemical parameters, OKane2022 degradation coefficients where required, and a two-node thermal model. SPMe uses partially reversible plating during training; blind DFN evaluation uses irreversible plating as specified by the manuscript protocol. SOH rescales the nominal 5 Ah capacity and the Coulomb-counting denominator. This is a battery simulation without an external dataset requirement. Cell and thermal settings are in `pcfrl/plant.py`; evaluation supports SPMe and DFN.
+The PyBaMM plant uses Chen2020 electrochemical parameters, OKane2022 degradation coefficients where required, and a two-node thermal model. SPMe uses partially reversible plating during training; DFN evaluation uses irreversible plating. SOH rescales the nominal 5 Ah capacity and the Coulomb-counting denominator. This is a battery simulation without an external dataset requirement. Cell and thermal settings are in `pcfrl/plant.py`; evaluation supports SPMe and DFN.
 
 ## Training and inference
 
@@ -42,23 +42,13 @@ pcfrl train --output outputs/sac --steps 500000 --seed 0 --variant sac
 
 Training writes `model.pt` and `history.json`. Evaluation writes `metrics.json` and `charging.png` under the selected output directory.
 
-## Implementation scope and functional validation
+## Controller and metrics
 
-The manuscript-based SAC, fixed-antecedent fuzzy controller and PyBaMM plant are reused. The paper's original replay buffers/checkpoints and full simulation logs are unavailable. No new training output is used as evidence for the manuscript's reported performance.
+The controller combines twelve fixed-antecedent TSK rules, a SAC actor/critic and an electrochemical current projection. Evaluation reports charging success/time, constraint violations, capacity fade, efficiency and latency, with per-condition traces. `pcfrl evaluate --baseline cccv` selects constant-current/constant-voltage control; `--baseline mscc` selects multistage control.
 
-| Paper module / metric | Entry | Command / output |
-| --- | --- | --- |
-| Twelve TSK rules, actor and constrained SAC | `pcfrl/method.py` | `pcfrl train ... --variant full` |
-| Electrochemical preview, thermal state, current projection | `pcfrl/plant.py` | real SPMe training / DFN evaluation |
-| Success/time, violation/fade/efficiency/latency | `pcfrl/cli.py:evaluate` | per-condition CSV and `metrics.json` |
-| CCCV / multistage controls | `evaluate` | `pcfrl evaluate --baseline cccv --output outputs/cccv --fidelity DFN` (use `mscc` for multistage) |
-| Functional validation | `smoke.py` | `python smoke.py`; optional `python smoke.py --plant` |
+## Windows CasADi runtime
 
-`python smoke.py` passed on Python 3.13.5 / torch 2.7.1+cu118 CPU, seed 0 and one thread: real SAC update with finite actor/critic losses, nonzero fuzzy-consequent gradient/update, actor update, nonnegative duals, hand-checked rule weights, current cap, checkpoint prediction equality and SAC/fixed-fuzzy/no-projection controls. The replay batch is synthetic and makes no battery-performance claim. `python smoke.py --plant` also passed in a dedicated system-site-packages environment with PyBaMM 25.12.2, CasADi 3.6.7 and pybammsolvers 0.3.3, retaining NumPy 2.1.3 and the above CPU/Torch configuration. It initializes real SPMe and DFN models, checks repeatable previews without committing their state, executes a 0.1 A charging second, verifies the native negative-current convention and solver-integrated discharge-capacity change (-0.1/3600 Ah), and checks the DFN negative-electrode irreversible-plating option. SPMe additionally executes the real 41-current safe-bound search and checks its returned current against all one-step constraints. CI executes the same `--plant` check. Complete reduced-range episode and condition-matrix checks are now available as described below; full policy training and the full published 10%-to-80% campaign were not run. Parameter merging and thermal constants remain explicit implementation choices.
-
-## Windows runtime used for the plant check
-
-On the tested Windows machine, CasADi's plugin loader failed with error 126 when its DLL directory contained non-ASCII path components. Loading the same DLL through Windows' Unicode API succeeded. An ASCII directory junction plus process-local `CASADIPATH` resolved plugin loading; the global environment was not changed. From this repository in PowerShell, the complete local setup and check are:
+If the CasADi installation path contains non-ASCII characters and its plugin loader reports error 126, use an ASCII directory junction with process-local `CASADIPATH`. From this repository in PowerShell:
 
 ```powershell
 python -m venv --system-site-packages runs/pybamm-venv
@@ -79,12 +69,12 @@ $env:OPENBLAS_NUM_THREADS = '1'
 ./runs/pybamm-venv/Scripts/python.exe -u smoke.py --plant
 ```
 
-The isolated environment and its junction are retained as a local runtime and are excluded from Git. An installation whose CasADi directory already has an ASCII-only path does not require the alias. The junction is a link to the runtime, so it must not be recursively cleaned as if it were a copy of the package.
+The isolated environment and its junction are local runtime files excluded from Git. An installation whose CasADi directory already has an ASCII-only path does not require the alias. The junction is a link to the runtime, so it must not be recursively cleaned as if it were a copy of the package.
 
 ## Complete episode and condition-matrix check
 
-`evaluate` now accepts explicit `--temperatures`, `--sohs`, `--initial-soc`,
-and `--max-seconds`. Defaults retain the manuscript's 10/25/40 C by
+`evaluate` accepts explicit `--temperatures`, `--sohs`, `--initial-soc`,
+and `--max-seconds`. Defaults are the 10/25/40 C by
 0.8/0.9/1 SOH matrix, 10% initial SOC, 80% target and 1800-second limit.
 Every condition produces a terminal status, trace and outcome metrics, including
 failed-condition time penalties at that registered limit.
@@ -94,13 +84,14 @@ pcfrl evaluate --model outputs/full/model.pt --output outputs/condition_matrix -
 python smoke.py --plant --episodes
 ```
 
-The executable episode smoke uses real SPMe and DFN solvers, the saved/reloaded
-SAC/fuzzy controller after one synthetic update, and the real safety search. It
-starts at SOC 0.7995 and finishes at the unchanged 0.8 target, with a 60-second
-registered limit: a 2x2 SPMe matrix (25/40 C, SOH 0.8/1) and a DFN condition
-(25 C, SOH 1). This short terminal-range protocol tests complete control flow,
-termination, matrix aggregation, trace-based time/efficiency arithmetic and
-constraint checks at modest cost. It is not the paper's full-range charging
-benchmark or a trained-policy performance result. The existing Windows runtime
-and process-local CasADi alias above apply unchanged. Original replay,
-trained checkpoints and private full-campaign logs remain unavailable.
+`smoke.py --plant --episodes` uses a short SOC 0.7995-to-0.8 range and a 60-second limit to check solver integration, termination, condition aggregation, trace arithmetic and constraints. The SPMe check covers 25/40 C by SOH 0.8/1; the DFN check uses 25 C and SOH 1.
+
+## Checks
+
+```bash
+python smoke.py
+python smoke.py --plant
+python smoke.py --plant --episodes
+```
+
+Synthetic replay checks cover SAC/fuzzy updates and checkpoint replay. Plant checks require PyBaMM and exercise actual SPMe/DFN integration.
